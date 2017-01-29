@@ -1370,6 +1370,21 @@ rpl_parallel_change_thread_count(rpl_parallel_thread_pool *pool,
     return res;
 
   /*
+    If we are about to delete pool, do an extra check that there are no new
+    slave threads running since we marked pool busy
+  */
+  if (!new_count)
+  {
+    if (any_slave_sql_running())
+    {
+      DBUG_PRINT("warning",
+                 ("SQL threads running while trying to reset parallel pool"));
+      pool_mark_not_busy(pool);
+      return 1;
+    }
+  }
+
+  /*
     Allocate the new list of threads up-front.
     That way, if we fail half-way, we only need to free whatever we managed
     to allocate, and will not be left with a half-functional thread pool.
@@ -1382,7 +1397,7 @@ rpl_parallel_change_thread_count(rpl_parallel_thread_pool *pool,
   {
     my_error(ER_OUTOFMEMORY, MYF(0), (int(new_count*sizeof(*new_list) +
                                           new_count*sizeof(*rpt_array))));
-    goto err;;
+    goto err;
   }
 
   for (i= 0; i < new_count; ++i)
@@ -1501,6 +1516,20 @@ err:
   }
   pool_mark_not_busy(pool);
   return 1;
+}
+
+/*
+  Deactivate the parallel replication thread pool, if there are now no more
+  SQL threads running.
+*/
+
+int rpl_parallel_resize_pool_if_no_slaves(void)
+{
+  /* master_info_index is set to NULL on shutdown */
+  if (opt_slave_parallel_threads > 0 && !any_slave_sql_running() &&
+      master_info_index)
+    return rpl_parallel_inactivate_pool(&global_rpl_thread_pool);
+  return 0;
 }
 
 
