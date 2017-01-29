@@ -80,6 +80,8 @@ Master_info::Master_info(LEX_STRING *connection_name_arg,
   bzero((char*) &file, sizeof(file));
   mysql_mutex_init(key_master_info_run_lock, &run_lock, MY_MUTEX_INIT_FAST);
   mysql_mutex_init(key_master_info_data_lock, &data_lock, MY_MUTEX_INIT_FAST);
+  mysql_mutex_init(key_master_info_start_stop_lock, &start_stop_lock,
+                   MY_MUTEX_INIT_SLOW);
   mysql_mutex_setflags(&run_lock, MYF_NO_DEADLOCK_DETECTION);
   mysql_mutex_setflags(&data_lock, MYF_NO_DEADLOCK_DETECTION);
   mysql_mutex_init(key_master_info_sleep_lock, &sleep_lock, MY_MUTEX_INIT_FAST);
@@ -117,6 +119,7 @@ Master_info::~Master_info()
   mysql_mutex_destroy(&run_lock);
   mysql_mutex_destroy(&data_lock);
   mysql_mutex_destroy(&sleep_lock);
+  mysql_mutex_destroy(&start_stop_lock);
   mysql_cond_destroy(&data_cond);
   mysql_cond_destroy(&start_cond);
   mysql_cond_destroy(&stop_cond);
@@ -731,12 +734,12 @@ void free_key_master_info(Master_info *mi)
 {
   DBUG_ENTER("free_key_master_info");
   /* Ensure that we are not in reset_slave while this is done */
-  lock_slave_threads(mi);
+  mi->lock_slave_threads();
   terminate_slave_threads(mi,SLAVE_FORCE_ALL);
   /* We use 2 here instead of 1 just to make it easier when debugging */
   mi->killed= 2;
   end_master_info(mi);
-  unlock_slave_threads(mi);
+  mi->unlock_slave_threads();
   delete mi;
   DBUG_VOID_RETURN;
 }
@@ -936,7 +939,6 @@ bool Master_info_index::init_all_master_info()
   File index_file_nr;
   DBUG_ENTER("init_all_master_info");
 
-  mysql_mutex_assert_owner(&LOCK_active_mi);
   DBUG_ASSERT(master_info_index);
 
   if ((index_file_nr= my_open(index_file_name,
@@ -984,7 +986,7 @@ bool Master_info_index::init_all_master_info()
       DBUG_RETURN(1);
     }
 
-    lock_slave_threads(mi);
+    mi->lock_slave_threads();
     init_thread_mask(&thread_mask,mi,0 /*not inverse*/);
 
     create_logfile_name_with_suffix(buf_master_info_file,
@@ -1012,14 +1014,14 @@ bool Master_info_index::init_all_master_info()
         if (master_info_index->add_master_info(mi, FALSE))
           DBUG_RETURN(1);
         succ_num++;
-        unlock_slave_threads(mi);
+        mi->unlock_slave_threads();
       }
       else
       {
         /* Master_info already in HASH */
         sql_print_error(ER(ER_CONNECTION_ALREADY_EXISTS),
                         (int) connection_name.length, connection_name.str);
-        unlock_slave_threads(mi);
+        mi->unlock_slave_threads();
         delete mi;
       }
       continue;
@@ -1036,7 +1038,7 @@ bool Master_info_index::init_all_master_info()
         /* Master_info was already registered */
         sql_print_error(ER(ER_CONNECTION_ALREADY_EXISTS),
                         (int) connection_name.length, connection_name.str);
-        unlock_slave_threads(mi);
+        mi->unlock_slave_threads();
         delete mi;
         continue;
       }
@@ -1065,7 +1067,7 @@ bool Master_info_index::init_all_master_info()
                                 (int) connection_name.length,
                                 connection_name.str);
       }
-      unlock_slave_threads(mi);
+      mi->unlock_slave_threads();
     }
   }
 
