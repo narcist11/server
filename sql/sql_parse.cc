@@ -3160,9 +3160,11 @@ end_with_restore_list:
     {
       if (stop_slave(thd, mi, 1/* net report*/))
         res= 1;
+      DBUG_ASSERT(res == 0 || thd->get_stmt_da()->is_error());  // QQ
       mi->release();
       if (rpl_parallel_resize_pool_if_no_slaves())
         res= 1;
+      DBUG_ASSERT(res == 0 || thd->get_stmt_da()->is_error());  // QQ
       if (!res)
         my_ok(thd);
     }
